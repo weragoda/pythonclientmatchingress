@@ -19,15 +19,7 @@ fields = {
     'response': fields.String
 }
 
-class Todo(restful.Resource):
-    @marshal_with(fields)
-    def get(self, todo_id):
-        if not(len(TODOS) > todo_id > 0) or TODOS[todo_id] is None:
-            abort(404, message="Todo {} doesn't exist".format(todo_id))
-        return TODOS[todo_id]
 
-parser = reqparse.RequestParser()
-parser.add_argument('task', type=str)
 
 class status(restful.Resource):
     @marshal_with(fields)
@@ -35,20 +27,20 @@ class status(restful.Resource):
         resp_ingress_conf = None
         resp_ingress_master = None
         pod_list = None
+
+        master_list_array = []
+        ingress_list_array = []
+
         try:
             config.load_kube_config()
             api = core_v1_api.CoreV1Api()
             api_instance = kubernetes.client.ExtensionsV1beta1Api()
-
 
             # Listing pod lbel for nginx-ingress
             pod_list = api.list_namespaced_pod('kube-system', label_selector='name=nginx-ingress')
 
             # Listing ingress from master
             resp_ingress_master = api_instance.list_ingress_for_all_namespaces()
-            print("+++++++++++++++++++++++++++")
-            print(resp_ingress_master)
-            print("+++++++++++++++++++++++++++")
 
             # Reading nginx.conf
             exec_command = ['cat','/etc/nginx/nginx.conf']
@@ -58,10 +50,22 @@ class status(restful.Resource):
                                                            stderr = True, stdin = False,
                                                            stdout = True, tty = False)
 
-            regex = r"(?:server_name)(?:\s(.*);)"
-            for _, match in enumerate(re.finditer(regex, resp_ingress_conf)):
-                print match.group(1)
-        #resp_ingress_master = # todo after ingress response done
+            # filter ingress server names and put to new array
+            regex_ingress = r"(?:server_name)(?:\s(.*);)"
+            for _, match in enumerate(re.finditer(regex_ingress, resp_ingress_conf)):
+                value =  match.group(1)
+                ingress_list_array.append(value)
+
+            #filter ingre master host put in to new array
+            regex_master = r"(?:'host':\s*')(.*)(?:'\n*,)"
+            for _, match in enumerate(re.finditer(regex_master, str(resp_ingress_master))):
+                value =  match.group(1)
+                master_list_array.append(value)
+
+            if ingress_list_array == master_list_array:
+                TODOS = { 'response':'ingress list comparision completed. ' + str(master_list_array) + ' ingres conf : ' + str(ingress_list_array)}
+            else:
+                abort(400, message="ingress list comparision fail :( master list: {} ingres conf:{}".format(master_list_array, ingress_list_array))
 
         except ApiException as e:
             if e.status != 404:
@@ -82,4 +86,3 @@ api.add_resource(status, '/healthcheck')
 ## enable
 if __name__ == '__main__':
         app.run(host= '0.0.0.0', port=5000, debug=False)
-
